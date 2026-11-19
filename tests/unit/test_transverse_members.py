@@ -40,17 +40,39 @@ def test_transverse_lines_ordered_along_span_and_across_width():
     assert lines == [[22, 23], [21, 20], [24, 25]]
 
 
+def _forces(rows, components):
+    tags = list(rows)
+    return xr.Dataset({"forces": xr.DataArray(
+        np.array([rows[t] for t in tags]),
+        coords={"Element": tags, "Component": components},
+        dims=("Element", "Component"),
+    )})
+
+
 def test_line_forces_convert_end_forces_to_internal_forces():
     nodes, members = _grid()
-    # constant internal shear of 5 kN on both elements of the x=0 line: OpenSees end forces are +5 / -5 kN
-    forces = xr.DataArray(
-        np.array([[5000.0, -5000.0], [5000.0, -5000.0]]),
-        coords={"Element": [22, 23], "Component": ["Vy_i", "Vy_j"]},
-        dims=("Element", "Component"),
-    )
-    pts = transverse_line_forces(xr.Dataset({"forces": forces}), nodes, members, [22, 23], "Vy_i", "Vy_j")
+    members[23] = [7, 4]  # 22 runs -Z (z 1 -> 0), 23 runs +Z (z 1 -> 2)
+    # Same 5 kN internal shear in both: end forces are +5/-5 kN along +Z, -5/+5 kN along -Z
+    ds = _forces({22: [-5000.0, 5000.0], 23: [5000.0, -5000.0]}, ["Vy_i", "Vy_j"])
+    pts = transverse_line_forces(ds, nodes, members, [22, 23], "Vy_i", "Vy_j")
     assert [z for _, z, _ in pts] == sorted(z for _, z, _ in pts)  # ordered across the width
-    assert all(abs(v - 5.0) < 1e-9 for _, _, v in pts)              # no zig-zag
+    assert all(abs(v - 5.0) < 1e-9 for _, _, v in pts)              # no zig-zag, no sign flip
+
+
+def test_transverse_bending_read_from_global_mx():
+    # Cross member 73 of the 22 m test bridge (SW load case), runs +Z, L = 2.433 m.
+    # Global Mx is its vertical bending; global Mz (its torsion) is 0.
+    from osdagbridge.core.bridge_types.plate_girder.plot_generator import transverse_line_values
+    nodes = {1: [5.0, 0.0, 0.0], 2: [5.0, 0.0, 2.433]}
+    members = {73: [1, 2]}
+    ds = _forces({73: [-790.0, 2522.0, -712.0, 712.0, 0.0, 0.0]},
+                 ["Mx_i", "Mx_j", "Vy_i", "Vy_j", "Mz_i", "Mz_j"])
+    _, _, m = transverse_line_values(ds, "Mz", nodes, members, [73])
+    _, _, v = transverse_line_values(ds, "Fy", nodes, members, [73])
+    _, _, t = transverse_line_values(ds, "Mx", nodes, members, [73])
+    assert np.allclose(m, [0.790, 2.522])
+    assert np.isclose(m[1] - m[0], abs(v[0]) * 2.433, atol=1e-3)  # dM = V * L
+    assert np.allclose(t, 0.0)
 
 
 def test_skewed_line_still_grouped():

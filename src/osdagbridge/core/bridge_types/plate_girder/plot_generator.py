@@ -1556,6 +1556,20 @@ def build_figure_deflection(ds, disp_key, nodes, members, edge_dist=0.0, eng_sca
 # TRANSVERSE MEMBERS (end diaphragms + intermediate cross members)
 # =============================================================================
 
+# Forces are in global axes. Girders run along X, so FORCE_MAP reads directly as
+# member axes. Transverse members run along Z: member axes are global axes turned
+# -90 deg about Y (x' = Z, y' = Y, z' = -X), so axial is Vz, torsion is Mz and
+# vertical bending is -Mx.  key -> (comp_i, comp_j, sign)
+TRANSVERSE_FORCE_MAP = {
+    "Fx": ("Vz_i", "Vz_j", 1.0),
+    "Fy": ("Vy_i", "Vy_j", 1.0),
+    "Fz": ("Vx_i", "Vx_j", -1.0),
+    "Mx": ("Mz_i", "Mz_j", 1.0),
+    "My": ("My_i", "My_j", 1.0),
+    "Mz": ("Mx_i", "Mx_j", -1.0),
+}
+
+
 def transverse_line_values(ds, key, nodes, members, line):
     """
     (xs, zs, vals) arrays along one transverse line for a plot key.
@@ -1569,7 +1583,8 @@ def transverse_line_values(ds, key, nodes, members, line):
         pts = transverse_line_displacements(ds, nodes, members, line, comp,
                                             sign=-1.0 if comp in ("y", "z") else 1.0)
     else:
-        pts = transverse_line_forces(ds, nodes, members, line, *FORCE_MAP[key])
+        comp_i, comp_j, sign = TRANSVERSE_FORCE_MAP[key]
+        pts = transverse_line_forces(ds, nodes, members, line, comp_i, comp_j, sign)
     if not pts:
         return (np.array([]),) * 3
     xs, zs, vals = (np.array(c) for c in zip(*pts))
@@ -1657,7 +1672,8 @@ def build_figure_transverse(ds, key, nodes, members, edge_dist=0.0, eng_scale=1.
     pad = max(1e-6, 0.05 * max(1e-9, global_vmax - global_vmin))
     ax.set_zlim(global_vmin - pad, global_vmax + pad)
     ax.set_box_aspect([x_range, z_range, (x_range * 0.30) * max(v_scale, 1e-6)])
-    kind = "Deflection" if is_disp else ("Bending Moment" if key in ("My", "Mz") else "Force")
+    kind = ("Deflection" if is_disp else "Bending Moment" if key in ("My", "Mz")
+            else "Torsion" if key == "Mx" else "Force")
     ax.set_title(f"Transverse Members {kind}  —  {label} ({unit})", fontsize=12, fontweight="bold", pad=12)
     fig._eng_scale = v_scale
     # Cross lines run across the width, so the girder plots' front elevation would show them edge-on

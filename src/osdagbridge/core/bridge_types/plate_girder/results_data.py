@@ -155,23 +155,23 @@ def transverse_member_lines(nodes: dict, members: dict) -> list[list]:
 
 
 def transverse_line_forces(ds, nodes: dict, members: dict, line: list,
-                           comp_i: str, comp_j: str) -> list[tuple]:
+                           comp_i: str, comp_j: str, sign: float = 1.0) -> list[tuple]:
     """
     Internal force along one transverse line: [(x, z, value_kN_or_kNm), ...]
     ordered across the width, two points per element so jumps at girder
     connections stay visible.
 
-    OpenSees reports element *end* forces in local axes, so the internal
-    force is F_i at the start node and -F_j at the end node (using the raw
-    values makes the diagram zig-zag between elements).
+    ds["forces"] holds element *end* forces in global axes (get_results()
+    default). Read along +Z, the internal force is F_i at the start node and
+    -F_j at the end node; an element drawn from +Z to -Z gets both signs
+    flipped. ``sign`` turns a global component into the member-axis one.
     """
     pts = []
     for e in line:
         n1, n2 = members[e]
-        v1 = float(ds["forces"].sel(Element=e, Component=comp_i).values) / 1000.0
-        v2 = -float(ds["forces"].sel(Element=e, Component=comp_j).values) / 1000.0
-        # shortcut: assumes every transverse element runs the same way across the width
-        # (true for the ospgrillage meshes checked: 0 of 80 reversed); flip per element if not.
+        s = sign if nodes[n2][2] >= nodes[n1][2] else -sign
+        v1 = s * float(ds["forces"].sel(Element=e, Component=comp_i).values) / 1000.0
+        v2 = -s * float(ds["forces"].sel(Element=e, Component=comp_j).values) / 1000.0
         pts.append((nodes[n1][0], nodes[n1][2], v1))
         pts.append((nodes[n2][0], nodes[n2][2], v2))
     pts.sort(key=lambda p: p[1])
