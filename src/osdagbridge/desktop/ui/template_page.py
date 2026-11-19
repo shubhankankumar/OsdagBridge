@@ -17,7 +17,9 @@ from osdagbridge.desktop.ui.dialogs.loading_popup import LoadingDialogManager
 from osdagbridge.desktop.ui.cad_3d import CAD3DWindow
 
 from osdagbridge.core.bridge_types.plate_girder.ui_fields import FrontendData
-from osdagbridge.core.bridge_types.plate_girder.defaults import BASIC_INPUT_DICT, solve_extend_basic_input_dict
+from osdagbridge.core.bridge_types.plate_girder.defaults import (
+    BASIC_INPUT_DICT, solve_extend_basic_input_dict, _on_no_of_girders_changed,
+)
 from osdagbridge.core.utils.common import *
 from osdagbridge.core.utils.osi_validator import validate_osi_inputs
 from osdagbridge.core.utils.logger import bridge_logger
@@ -787,8 +789,60 @@ class CustomWindow(QWidget):
         # Connect to input dock's value changed signals
         # This will update the CAD whenever any input field changes
         if hasattr(self.input_dock, 'input_value_changed'):
-            self.input_dock.input_value_changed.connect(self.update_cad_from_inputs)        
-            
+            self.input_dock.input_value_changed.connect(self.update_cad_from_inputs)
+        # Double-click edits made directly on the 2D CAD dimension labels
+        self.cad_comp_widget.dimension_edited.connect(self.on_cad_dimension_edited)
+
+    def on_cad_dimension_edited(self, key: str, value: float):
+        """
+        Apply a value typed into a 2D CAD dimension label, using the same
+        validation as the field it belongs to, then redraw.
+        Basic inputs (Span, Carriageway Width) go through the Input Dock;
+        additional inputs (Girder Spacing, Deck Thickness) through Additional Inputs.
+        """
+        if self.input_dock.is_locked:
+            CustomMessageBox(
+                title="Inputs Locked",
+                text="Unlock the inputs to edit dimensions from the CAD.",
+                dialogType=MessageBoxType.Information,
+            ).exec()
+            return
+
+        text = f"{value:.3f}".rstrip("0").rstrip(".")
+
+        basic_field = self.input_dock.input_widget.findChild(QLineEdit, key)
+        if basic_field is not None:
+            basic_field.setText(text)
+            # Validates (popup + correction on error), updates input_dict, redraws the CAD
+            self.input_dock._on_field_edited(key, basic_field)
+            return
+
+        # Additional inputs need the layout solved from the basic inputs first
+        if not self.validate_required_inputs():
+            return
+        if self.input_dock.is_require_field_changed:
+            solve_extend_basic_input_dict(self.input_dict)
+            self.input_dock.is_require_field_changed = False
+
+        dlg = self._get_additional_inputs()
+        dlg.set_input_dictionary(self.input_dict)
+        field = dlg.findChild(QLineEdit, key)
+        if field is None:
+            return
+        field.setText(text)
+        dlg._on_field_edited(key, field)  # validates (popup + correction on error)
+        if key == KEY_TS_GIRDER_SPACING:
+            girders_before = dlg.working_input_dict.get(KEY_TS_NO_OF_GIRDERS)
+            # Spacing re-solves overhang / girder count, as in the dialog's own spacing handler
+            if dlg.update_girder_layout("spacing") and \
+                    dlg.working_input_dict.get(KEY_TS_NO_OF_GIRDERS) != girders_before:
+                # Only a new girder count needs the per-girder keys regenerated
+                _on_no_of_girders_changed(dlg.working_input_dict)
+
+        self.input_dict.update(dlg.working_input_dict)
+        dlg.is_modified = False
+        self.update_cad_from_inputs()
+
     # Function for saving input dictionary into an OSI file
     def saveOSI_inputs(self):
         # Populate additional input defaults so they appear in the saved file

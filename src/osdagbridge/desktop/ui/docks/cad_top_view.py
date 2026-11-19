@@ -6,9 +6,10 @@ Author: Arushi
 from osdagbridge.core.utils.common import *
 import math
 from PySide6.QtWidgets import QWidget, QPushButton, QScrollArea
-from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QSize
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QSize, Signal
 from PySide6.QtGui import QPainter, QPen, QColor, QFont, QBrush, QPolygonF, QIcon
 from .cad_cross_section import CrossSectionCADWidget
+from .cad_dimension_editor import CadDimensionEditMixin
 
 # ---- CAD Grey Palette ----
 CAD_DARK_GREY   = QColor(90, 90, 90)
@@ -25,9 +26,11 @@ DIM_STACK_GAP = 28         # vertical gap between stacked dimensions
 LEADER_TEXT_OFFSET = 25    # leader label distance
 
 
-class TopViewCADWidget(QWidget):
+class TopViewCADWidget(CadDimensionEditMixin, QWidget):
     """Widget for drawing bridge top view"""
-    
+    # (input dict key, new value) from double-click editing of a dimension label
+    dimension_edited = Signal(str, float)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.show_dimensions = True
@@ -465,7 +468,8 @@ class TopViewCADWidget(QWidget):
     def mouseMoveEvent(self, event):
         """Handle mouse hover for top view"""
         pos = event.position() if hasattr(event, 'position') else event.pos()
-        
+        self._update_label_cursor(pos)
+
         # top view hover logic
         new_hovered = None
         for rect, element_type in self.top_view_hover_zones:
@@ -480,7 +484,8 @@ class TopViewCADWidget(QWidget):
     def paintEvent(self, event):
         # clear hover zones at start of each paint
         self.top_view_hover_zones = []
-        
+        self._reset_label_regions()
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor(255, 255, 255))
@@ -518,6 +523,7 @@ class TopViewCADWidget(QWidget):
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(bg_color))
         painter.drawRect(bg_rect)
+        self._register_label_region(painter, bg_rect, text)
 
         # Draw each text line
         painter.setPen(QPen(text_color, 0.8))

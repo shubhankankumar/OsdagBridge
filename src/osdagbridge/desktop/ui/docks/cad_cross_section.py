@@ -6,7 +6,7 @@ Author: Arushi
 
 import math
 from PySide6.QtWidgets import QWidget, QPushButton, QScrollArea
-from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QSize
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QSize, Signal
 from PySide6.QtGui import QPainter, QPen, QColor, QFont, QBrush, QPolygonF, QIcon, QPixmap
 from osdagbridge.core.utils.common import *
 from osdagbridge.desktop.cad.irc5_geometry import (
@@ -14,10 +14,13 @@ from osdagbridge.desktop.cad.irc5_geometry import (
     RailingGeometry,
     MedianGeometry,
 )
+from .cad_dimension_editor import CadDimensionEditMixin
 
 
-class CrossSectionCADWidget(QWidget):
+class CrossSectionCADWidget(CadDimensionEditMixin, QWidget):
     """Widget for drawing bridge cross-section view"""
+    # (input dict key, new value) from double-click editing of a dimension label
+    dimension_edited = Signal(str, float)
     # ===== SHARED CAD COLORS =====
     GIRDER_COLOR = QColor(179, 180, 160) 
     STIFFENER_COLOR = QColor(210, 210, 205)
@@ -694,9 +697,10 @@ class CrossSectionCADWidget(QWidget):
 
     def mouseMoveEvent(self, event):
         """Handle mouse hover for both labels and structural elements"""
+        pos = event.position() if hasattr(event, 'position') else event.pos()
+        self._update_label_cursor(pos)
         if not getattr(self, 'interactive_hover', True):
             return
-        pos = event.position() if hasattr(event, 'position') else event.pos()
         
         # Check label hover first
         new_hovered = -1
@@ -729,7 +733,8 @@ class CrossSectionCADWidget(QWidget):
         # clear hover labels and zones at start of each paint
         self.hover_labels = []
         self.cross_section_hover_zones = []
-        
+        self._reset_label_regions()
+
         painter = QPainter(self)
         try:
             painter.setRenderHint(QPainter.Antialiasing)
@@ -770,6 +775,7 @@ class CrossSectionCADWidget(QWidget):
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(bg_color))
         painter.drawRect(bg_rect)
+        self._register_label_region(painter, bg_rect, text)
 
         # Draw each text line
         painter.setPen(QPen(text_color, 0.8))
@@ -778,7 +784,7 @@ class CrossSectionCADWidget(QWidget):
         for i, line in enumerate(lines):
             painter.drawText(int(x), int(first_line_y + i * line_height), line)
 
-    
+
     def draw_dimension_arrow(self, painter, x1, y1, x2, y2, text, horizontal=True, offset=0, text_offset=0, draw_extensions=True, extension_direction='down', extension_end_y=None):
         """dimension line with arrows and text with extension lines"""
         painter.setPen(QPen(QColor(0, 0, 0), 0.8))
