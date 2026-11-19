@@ -132,6 +132,8 @@ KEY_SECTION_OUTPUT_STEELDESIGN = "section.output.superstructure.steeldesign"
 
 # ── Output field keys ─────────────────────────────────────────────────────────
 KEY_ANALYSIS_MEMBER           = "analysis.member"
+# Analysis member dropdown entry that plots all transverse members (end diaphragms + cross members)
+VALUE_TRANSVERSE_MEMBERS      = "Transverse Members"
 KEY_ANALYSIS_LOAD_COMBINATION = "analysis.load_combination"
 KEY_ANALYSIS_FORCES           = "analysis.forces"
 KEY_ANALYSIS_DISPLAY_OPTIONS  = "analysis.display_options"
@@ -1388,6 +1390,8 @@ DESIGN_CHECK_CAP_PFX = {
 }
 
 # Value Lists for Additional Inputs
+# Mode value that makes a field user-defined; its paired input must then be filled.
+VALUE_CUSTOM = "Custom"
 VALUES_NO_YES = ["No", "Yes"]
 VALUES_REINF_MATERIAL = ["Fe 415", "Fe 500", "Fe 550"]
 VALUES_REINF_SIZE = ["8", "10", "12", "16", "20", "25", "32"]
