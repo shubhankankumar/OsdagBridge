@@ -117,7 +117,11 @@ class CadDimensionEditMixin:
         editor.setValidator(QDoubleValidator(0.0, 1e6, 3, editor))
         editor.setAlignment(Qt.AlignCenter)
         editor.setToolTip(f"{name}: Enter to apply, Esc to cancel")
-        editor.setStyleSheet("QLineEdit { border: 1px solid #90AF13; background: white; }")
+        # Explicit colours: the global stylesheet otherwise leaves the typed text invisible here
+        editor.setStyleSheet(
+            "QLineEdit { border: 1px solid #90AF13; background: white; color: black;"
+            " font-family: Arial; font-size: 9pt; padding: 0px 2px; }"
+        )
         current = float(self.params.get(param, 0.0)) * factor
         editor.setText(f"{current:.3f}".rstrip("0").rstrip("."))
         width = max(int(rect.width()), 90)
