@@ -1,6 +1,10 @@
 """Member classification / transverse-line grouping used by the transverse member plots."""
+import numpy as np
+import xarray as xr
+
 from osdagbridge.core.bridge_types.plate_girder.results_data import (
     classify_members,
+    transverse_line_forces,
     transverse_member_lines,
 )
 
@@ -34,6 +38,19 @@ def test_transverse_lines_ordered_along_span_and_across_width():
     lines = transverse_member_lines(nodes, members)
     # one line per station, sorted by x; first/last are the end diaphragms
     assert lines == [[22, 23], [21, 20], [24, 25]]
+
+
+def test_line_forces_convert_end_forces_to_internal_forces():
+    nodes, members = _grid()
+    # constant internal shear of 5 kN on both elements of the x=0 line: OpenSees end forces are +5 / -5 kN
+    forces = xr.DataArray(
+        np.array([[5000.0, -5000.0], [5000.0, -5000.0]]),
+        coords={"Element": [22, 23], "Component": ["Vy_i", "Vy_j"]},
+        dims=("Element", "Component"),
+    )
+    pts = transverse_line_forces(xr.Dataset({"forces": forces}), nodes, members, [22, 23], "Vy_i", "Vy_j")
+    assert [z for _, z, _ in pts] == sorted(z for _, z, _ in pts)  # ordered across the width
+    assert all(abs(v - 5.0) < 1e-9 for _, _, v in pts)              # no zig-zag
 
 
 def test_skewed_line_still_grouped():

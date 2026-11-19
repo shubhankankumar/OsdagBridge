@@ -1558,39 +1558,21 @@ def build_figure_deflection(ds, disp_key, nodes, members, edge_dist=0.0, eng_sca
 
 def transverse_line_values(ds, key, nodes, members, line):
     """
-    (xs, zs, vals) along one transverse line, ordered across the width.
-
-    Forces (FORCE_MAP keys): internal force at both ends of every element,
-    in kN / kNm, so jumps at girder connections stay visible. OpenSees
-    reports element *end* forces, so the internal value is F_i at the start
-    node and -F_j at the end node (otherwise the diagram zig-zags). Displacements (DISP_MAP
-    keys): one value per node, in mm, vertical sag positive-down like the
-    girder deflection plot.
+    (xs, zs, vals) arrays along one transverse line for a plot key.
+    Maps the key to dataset components; the extraction itself is in results_data.
     """
-    pts = []  # (z, x, value)
+    from .results_data import transverse_line_displacements, transverse_line_forces
+
     if key in DISP_MAP:
         comp = {"Dx": "x", "Dy": "y", "Dz": "z"}[key]
-        sign = -1.0 if comp in ("y", "z") else 1.0
-        seen = set()
-        for e in line:
-            for n in members[e]:
-                if n in seen:
-                    continue
-                seen.add(n)
-                val = float(ds["displacements"].sel(Node=n, Component=comp).values) * 1000.0 * sign
-                pts.append((nodes[n][2], nodes[n][0], val))
+        # vertical sag positive-down, as in build_figure_deflection
+        pts = transverse_line_displacements(ds, nodes, members, line, comp,
+                                            sign=-1.0 if comp in ("y", "z") else 1.0)
     else:
-        comp_i, comp_j = FORCE_MAP[key]
-        for e in line:
-            n1, n2 = members[e]
-            v1 = float(ds["forces"].sel(Element=e, Component=comp_i).values) / 1000.0
-            v2 = -float(ds["forces"].sel(Element=e, Component=comp_j).values) / 1000.0
-            # shortcut: assumes every transverse element runs in the same direction across the
-            # width (true for ospgrillage meshes checked: 0 of 80 reversed); flip signs per element if not.
-            pts.append((nodes[n1][2], nodes[n1][0], v1))
-            pts.append((nodes[n2][2], nodes[n2][0], v2))
-    pts.sort(key=lambda p: p[0])
-    zs, xs, vals = (np.array(c) for c in zip(*pts)) if pts else (np.array([]),) * 3
+        pts = transverse_line_forces(ds, nodes, members, line, *FORCE_MAP[key])
+    if not pts:
+        return (np.array([]),) * 3
+    xs, zs, vals = (np.array(c) for c in zip(*pts))
     return xs, zs, vals
 
 

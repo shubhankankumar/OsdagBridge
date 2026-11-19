@@ -527,7 +527,12 @@ class MplPlotWidget(QWidget):
         ds = self._ds_all.sel(Loadcase=loadcase)
         
         old_elev, old_azim = None, None
-        if hasattr(self, '_fig') and self._fig and self._fig.axes:
+        # Keep the user's camera only within one plot family: girder plots look along the
+        # span, transverse plots need an angled view, so switching family uses its default.
+        is_transverse = sel_girder == VALUE_TRANSVERSE_MEMBERS
+        same_family = getattr(self, "_last_plot_transverse", is_transverse) == is_transverse
+        self._last_plot_transverse = is_transverse
+        if same_family and hasattr(self, '_fig') and self._fig and self._fig.axes:
             old_ax = self._fig.axes[0]
             if hasattr(old_ax, 'elev'):
                 old_elev = old_ax.elev

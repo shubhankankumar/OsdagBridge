@@ -154,6 +154,43 @@ def transverse_member_lines(nodes: dict, members: dict) -> list[list]:
     return ordered
 
 
+def transverse_line_forces(ds, nodes: dict, members: dict, line: list,
+                           comp_i: str, comp_j: str) -> list[tuple]:
+    """
+    Internal force along one transverse line: [(x, z, value_kN_or_kNm), ...]
+    ordered across the width, two points per element so jumps at girder
+    connections stay visible.
+
+    OpenSees reports element *end* forces in local axes, so the internal
+    force is F_i at the start node and -F_j at the end node (using the raw
+    values makes the diagram zig-zag between elements).
+    """
+    pts = []
+    for e in line:
+        n1, n2 = members[e]
+        v1 = float(ds["forces"].sel(Element=e, Component=comp_i).values) / 1000.0
+        v2 = -float(ds["forces"].sel(Element=e, Component=comp_j).values) / 1000.0
+        # shortcut: assumes every transverse element runs the same way across the width
+        # (true for the ospgrillage meshes checked: 0 of 80 reversed); flip per element if not.
+        pts.append((nodes[n1][0], nodes[n1][2], v1))
+        pts.append((nodes[n2][0], nodes[n2][2], v2))
+    pts.sort(key=lambda p: p[1])
+    return pts
+
+
+def transverse_line_displacements(ds, nodes: dict, members: dict, line: list,
+                                  comp: str, sign: float = 1.0) -> list[tuple]:
+    """Nodal displacement along one transverse line: [(x, z, value_mm), ...] ordered across the width."""
+    line_nodes = {n for e in line for n in members[e]}
+    pts = [
+        (nodes[n][0], nodes[n][2],
+         float(ds["displacements"].sel(Node=n, Component=comp).values) * 1000.0 * sign)
+        for n in line_nodes
+    ]
+    pts.sort(key=lambda p: p[1])
+    return pts
+
+
 def dump_full_data(
     model,
     edge_dist: float = 0.0,
