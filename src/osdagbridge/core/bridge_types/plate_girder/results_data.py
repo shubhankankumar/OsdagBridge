@@ -10,7 +10,7 @@ bridge-wrapper dependency.
 
 from __future__ import annotations
 import json
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -92,6 +92,66 @@ def _build_nodes_members() -> tuple[dict, dict]:
         for e in ops.getEleTags()
     }
     return nodes, members
+
+
+def classify_members(nodes: dict, members: dict, tol: float = 1e-3) -> tuple[list, list]:
+    """
+    Split ospgrillage element tags into (longitudinal, transverse).
+
+    Grillage axes: X = span, Y = vertical, Z = bridge width. A member is
+    longitudinal (girder / edge beam) when both end nodes share Y and Z;
+    every other member runs across the width and is transverse (end
+    diaphragms on the start/end edges, intermediate cross members / slab
+    strips in between).
+    """
+    longitudinal, transverse = [], []
+    for tag, (n1, n2) in members.items():
+        if n1 not in nodes or n2 not in nodes:
+            continue
+        (_, y1, z1), (_, y2, z2) = nodes[n1][:3], nodes[n2][:3]
+        if abs(z1 - z2) < tol and abs(y1 - y2) < tol:
+            longitudinal.append(tag)
+        else:
+            transverse.append(tag)
+    return longitudinal, transverse
+
+
+def transverse_member_lines(nodes: dict, members: dict) -> list[list]:
+    """
+    Group transverse elements into cross lines, one per X station.
+
+    Transverse elements of one line are chained through shared nodes and
+    never touch another line's (girders are excluded), so each connected
+    group is one line. Elements in a line are ordered across the width
+    (by mid Z); lines are ordered along the span (by mid X), so the first
+    and last lines are the end diaphragms.
+    """
+    _, transverse = classify_members(nodes, members)
+
+    # Union-find on shared nodes
+    parent = {}
+
+    def find(n):
+        while parent.setdefault(n, n) != n:
+            parent[n] = parent[parent[n]]
+            n = parent[n]
+        return n
+
+    for tag in transverse:
+        n1, n2 = members[tag]
+        parent[find(n1)] = find(n2)
+
+    lines = defaultdict(list)
+    for tag in transverse:
+        lines[find(members[tag][0])].append(tag)
+
+    def mid(tag, axis):
+        n1, n2 = members[tag]
+        return (nodes[n1][axis] + nodes[n2][axis]) / 2.0
+
+    ordered = [sorted(tags, key=lambda t: mid(t, 2)) for tags in lines.values()]
+    ordered.sort(key=lambda tags: sum(mid(t, 0) for t in tags) / len(tags))
+    return ordered
 
 
 def dump_full_data(
@@ -408,18 +468,7 @@ def _build_full_data(model, edge_dist: float = 0.0, dataset=None, lazy: bool = F
     disp_components = [str(
         c) for c in ds0["displacements"].coords["Component"].values] if "displacements" in ds0.data_vars else []
 
-    # Classify members: longitudinal = both nodes share same Z and same Y
-    _z_tol = 1e-3
-    longitudinal_members = []
-    transverse_members = []
-    for tag, (n1, n2) in members.items():
-        if n1 not in nodes or n2 not in nodes:
-            continue
-        if (abs(nodes[n1][2] - nodes[n2][2]) < _z_tol and
-                abs(nodes[n1][1] - nodes[n2][1]) < _z_tol):
-            longitudinal_members.append(tag)
-        else:
-            transverse_members.append(tag)
+    longitudinal_members, transverse_members = classify_members(nodes, members)
 
     data: dict = {
         "nodes": {str(k): list(v) for k, v in nodes.items()},

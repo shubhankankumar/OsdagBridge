@@ -1552,6 +1552,142 @@ def build_figure_deflection(ds, disp_key, nodes, members, edge_dist=0.0, eng_sca
     return fig, summary_data
 
 
+# =============================================================================
+# TRANSVERSE MEMBERS (end diaphragms + intermediate cross members)
+# =============================================================================
+
+def transverse_line_values(ds, key, nodes, members, line):
+    """
+    (xs, zs, vals) along one transverse line, ordered across the width.
+
+    Forces (FORCE_MAP keys): internal force at both ends of every element,
+    in kN / kNm, so jumps at girder connections stay visible. OpenSees
+    reports element *end* forces, so the internal value is F_i at the start
+    node and -F_j at the end node (otherwise the diagram zig-zags). Displacements (DISP_MAP
+    keys): one value per node, in mm, vertical sag positive-down like the
+    girder deflection plot.
+    """
+    pts = []  # (z, x, value)
+    if key in DISP_MAP:
+        comp = {"Dx": "x", "Dy": "y", "Dz": "z"}[key]
+        sign = -1.0 if comp in ("y", "z") else 1.0
+        seen = set()
+        for e in line:
+            for n in members[e]:
+                if n in seen:
+                    continue
+                seen.add(n)
+                val = float(ds["displacements"].sel(Node=n, Component=comp).values) * 1000.0 * sign
+                pts.append((nodes[n][2], nodes[n][0], val))
+    else:
+        comp_i, comp_j = FORCE_MAP[key]
+        for e in line:
+            n1, n2 = members[e]
+            v1 = float(ds["forces"].sel(Element=e, Component=comp_i).values) / 1000.0
+            v2 = -float(ds["forces"].sel(Element=e, Component=comp_j).values) / 1000.0
+            # shortcut: assumes every transverse element runs in the same direction across the
+            # width (true for ospgrillage meshes checked: 0 of 80 reversed); flip signs per element if not.
+            pts.append((nodes[n1][2], nodes[n1][0], v1))
+            pts.append((nodes[n2][2], nodes[n2][0], v2))
+    pts.sort(key=lambda p: p[0])
+    zs, xs, vals = (np.array(c) for c in zip(*pts)) if pts else (np.array([]),) * 3
+    return xs, zs, vals
+
+
+def build_figure_transverse(ds, key, nodes, members, edge_dist=0.0, eng_scale=1.0):
+    """
+    3-D diagram of a force (FORCE_MAP key) or displacement (DISP_MAP key)
+    along every transverse line of the grillage. The first and last lines
+    (end diaphragms) are drawn in a different colour from the intermediate
+    cross members.
+
+    Returns (fig, summary_data) with summary_data =
+    {"End Diaphragms": {"max", "min"}, "Cross Members": {"max", "min"}}.
+    """
+    from .results_data import transverse_member_lines
+
+    v_scale = _value_plot_scale(eng_scale)
+    is_disp = key in DISP_MAP
+    label = DISP_DISPLAY.get(key, key) if is_disp else FORCE_DISPLAY.get(key, key)
+    unit = "mm" if is_disp else ("kNm" if key.startswith("M") else "kN")
+    # Moments plot positive-down, as in the girder BMD
+    plot_sign = -1.0 if key in ("My", "Mz") else 1.0
+
+    fig = Figure(figsize=(14, 6), dpi=110, facecolor="white")
+    ax = fig.add_subplot(111, projection="3d", facecolor="white")
+
+    all_xs = [c[0] for c in nodes.values()]
+    all_zs = [c[2] for c in nodes.values()]
+    x_range = max(all_xs) - min(all_xs) or 1.0
+    z_range = max(all_zs) - min(all_zs) or 1.0
+    ax.set_xlim(min(all_xs), max(all_xs))
+    ax.set_ylim(min(all_zs), max(all_zs))
+
+    _add_grillage_background(ax, nodes, members, show_transverse=True, show_inner_nodes=False)
+
+    lines = transverse_member_lines(nodes, members)
+    groups = {"End Diaphragms": [], "Cross Members": []}
+    colors = {"End Diaphragms": "#1565C0", "Cross Members": "#C62828"}
+    global_vmin = global_vmax = 0.0
+
+    for idx, line in enumerate(lines):
+        group = "End Diaphragms" if idx in (0, len(lines) - 1) else "Cross Members"
+        xs, zs, vals = transverse_line_values(ds, key, nodes, members, line)
+        if not vals.size:
+            continue
+        groups[group].append((xs, zs, vals))
+        y_plot = plot_sign * vals * v_scale
+        global_vmin = min(global_vmin, float(y_plot.min()))
+        global_vmax = max(global_vmax, float(y_plot.max()))
+
+        if not is_disp:
+            ax.plot_surface(np.vstack([xs, xs]), np.vstack([zs, zs]),
+                            np.vstack([np.zeros_like(y_plot), y_plot]),
+                            color=colors[group], alpha=0.15, linewidth=0, antialiased=False, zorder=2)
+        ax.plot(xs, zs, y_plot, color=colors[group], linewidth=2.0, zorder=4)
+        for xi, zi, yi, vi in zip(xs, zs, y_plot, vals):
+            ax.text(xi, zi, yi, f" {vi:.2f}", color="#555555", fontsize=7, zorder=5, gid="all_vals")
+
+    summary_data = {}
+    for group, items in groups.items():
+        if not items:
+            continue
+        xs = np.concatenate([i[0] for i in items])
+        zs = np.concatenate([i[1] for i in items])
+        vals = np.concatenate([i[2] for i in items])
+        summary_data[group] = {"max": float(vals.max()), "min": float(vals.min())}
+        for tag, j in (("max_line", int(vals.argmax())), ("min_line", int(vals.argmin()))):
+            y = plot_sign * vals[j] * v_scale
+            ax.plot([xs[j], xs[j]], [zs[j], zs[j]], [0, y], color="#333333",
+                    linewidth=1.2, linestyle="--", zorder=3, gid=tag)
+            ax.text(xs[j], zs[j], y, f" {vals[j]:.2f} {unit}", color="#333333", fontsize=8,
+                    fontweight="bold", zorder=6, gid=tag,
+                    bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=1.0))
+
+    _add_supports(ax, nodes, members, edge_dist=edge_dist)
+    _add_node_number_labels(ax, nodes)
+    _add_element_number_labels(ax, nodes, members)
+
+    ax.set_xlabel("Span Length (m)", fontsize=10, labelpad=8)
+    ax.set_ylabel("Bridge Width (m)", fontsize=10, labelpad=8)
+    ax.set_zlabel(f"{label} ({unit})", fontsize=10, labelpad=8)
+    _set_value_axis_tick_formatter(ax, v_scale, value_sign=plot_sign)
+    pad = max(1e-6, 0.05 * max(1e-9, global_vmax - global_vmin))
+    ax.set_zlim(global_vmin - pad, global_vmax + pad)
+    ax.set_box_aspect([x_range, z_range, (x_range * 0.30) * max(v_scale, 1e-6)])
+    kind = "Deflection" if is_disp else ("Bending Moment" if key in ("My", "Mz") else "Force")
+    ax.set_title(f"Transverse Members {kind}  —  {label} ({unit})", fontsize=12, fontweight="bold", pad=12)
+    fig._eng_scale = v_scale
+    # Cross lines run across the width, so the girder plots' front elevation would show them edge-on
+    ax.view_init(elev=25, azim=-35)
+    for pane in (ax.xaxis.pane, ax.yaxis.pane, ax.zaxis.pane):
+        pane.fill = False
+        pane.set_edgecolor("#555555")
+    _add_coordinate_triad(ax, nodes, eng_scale=v_scale)
+    ax.set_axis_off()
+    return fig, summary_data
+
+
 def figure_to_bytes(fig, fmt="png", dpi=150):
     """Convenience helper — render a matplotlib figure to raw bytes."""
     buf = io.BytesIO()
